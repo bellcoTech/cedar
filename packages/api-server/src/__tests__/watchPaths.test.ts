@@ -415,6 +415,100 @@ describe('watchPaths', () => {
       expect(ignoreFn(normalizedApiSrc)).toBe(false)
     })
   })
+
+  describe('Prisma generator output is ignored', () => {
+    let outsideTmpDir: string
+    const originalCedarCwd2 = process.env.CEDAR_CWD
+
+    beforeAll(async () => {
+      // Separate fixture: schema points the generator output at a location
+      // outside the schema directory (which is the case that causes a watcher
+      // rebuild loop without the explicit ignore).
+      outsideTmpDir = await fs.promises.mkdtemp(
+        path.join(os.tmpdir(), 'cedar-prisma-output-test-'),
+      )
+
+      await fs.promises.writeFile(
+        path.join(outsideTmpDir, 'cedar.toml'),
+        '# cedar test',
+      )
+      await fs.promises.writeFile(
+        path.join(outsideTmpDir, 'package.json'),
+        JSON.stringify(
+          { name: 'workspace-test', private: true, workspaces: ['api'] },
+          null,
+          2,
+        ),
+      )
+
+      const apiDir = path.join(outsideTmpDir, 'api')
+      await fs.promises.mkdir(path.join(apiDir, 'src'), { recursive: true })
+      await fs.promises.writeFile(
+        path.join(apiDir, 'package.json'),
+        JSON.stringify({ name: 'api', version: '1.0.0' }, null, 2),
+      )
+
+      // Schema lives in `api/db/` but points its output at `api/src/generated/`
+      const dbDir = path.join(apiDir, 'db')
+      await fs.promises.mkdir(dbDir, { recursive: true })
+      await fs.promises.writeFile(
+        path.join(apiDir, 'prisma.config.cjs'),
+        "module.exports = { schema: 'db/schema.prisma' }",
+      )
+      await fs.promises.writeFile(
+        path.join(dbDir, 'schema.prisma'),
+        [
+          'datasource db {',
+          '  provider = "postgresql"',
+          '}',
+          '',
+          'generator client {',
+          '  provider = "prisma-client-js"',
+          '  output   = "../src/generated/prisma"',
+          '}',
+          '',
+        ].join('\n'),
+      )
+
+      process.env.CEDAR_CWD = outsideTmpDir
+    })
+
+    afterAll(async () => {
+      if (originalCedarCwd2 === undefined) {
+        delete process.env.CEDAR_CWD
+      } else {
+        process.env.CEDAR_CWD = originalCedarCwd2
+      }
+      try {
+        await fs.promises.rm(outsideTmpDir, { recursive: true, force: true })
+      } catch {
+        // ignore
+      }
+    })
+
+    it('ignores files inside the generator output directory', async () => {
+      const ignoreFn = await getIgnoreFunction()
+
+      const generatedFile = path.join(
+        outsideTmpDir,
+        'api',
+        'src',
+        'generated',
+        'prisma',
+        'client.ts',
+      )
+      const apiSrcFile = path.join(
+        outsideTmpDir,
+        'api',
+        'src',
+        'index.ts',
+      )
+
+      expect(ignoreFn(importStatementPath(generatedFile))).toBe(true)
+      // Regular src files outside the generator output stay watched.
+      expect(ignoreFn(importStatementPath(apiSrcFile))).toBe(false)
+    })
+  })
 })
 
 function isPathWatched(
