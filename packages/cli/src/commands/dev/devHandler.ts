@@ -21,6 +21,7 @@ import { getFreePort } from '../../lib/ports.js'
 import { serverFileExists } from '../../lib/project.js'
 
 import { getApiDebugFlag } from './apiDebugFlag.js'
+import { checkPackageJsonTypeFields } from './checkPackageJsonTypeFields.js'
 import { getPackageWatchCommands } from './packageWatchCommands.js'
 
 interface DevHandlerOptions {
@@ -210,6 +211,12 @@ export const handler = async ({
   const rootPackageJson = JSON.parse(
     fs.readFileSync(rootPackageJsonPath, 'utf8'),
   )
+
+  // Surface a warning if the project's root, api, and web `package.json`
+  // `type` fields don't agree — that mismatch produces dual-package
+  // hazards in cedar's runtime (e.g. `context.currentUser` invisible
+  // across CJS- and ESM-loaded code).
+  checkPackageJsonTypeFields()
 
   // Determine which dev command to use based on which workspaces are included
   // and which experimental features are enabled.
